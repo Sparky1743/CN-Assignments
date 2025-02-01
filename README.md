@@ -18,7 +18,7 @@ A Python-based network packet sniffer that captures and analyzes network traffic
   - `h`: Generate packet size histogram
   - `u`: List unique source-destination pairs
   - `m`: Analyze network flows
-  - `q`: Exit analysis mode
+  - `q`: Exit
 - **Flexible Capture Control**: Stop capture anytime using Ctrl+C
 
 ## Requirements
@@ -33,8 +33,8 @@ A Python-based network packet sniffer that captures and analyzes network traffic
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/python-packet-sniffer.git
-   cd python-packet-sniffer
+   git clone https://github.com/Sparky1743/CN-Assignments
+   cd Computer-Networks/Packet-Sniffer/
    ```
 
 2. Install dependencies:
