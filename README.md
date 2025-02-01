@@ -18,14 +18,12 @@ A Python-based network packet sniffer that captures and analyzes network traffic
 ## Features
 
 - **Packet Capture**: Real-time packet capture from specified network interfaces
-- **Protocol Analysis**: Comprehensive parsing of Ethernet, IP, TCP, and UDP headers
 - **Network Statistics**: 
   - Packet count and total bytes transferred
   - Real-time packets per second (PPS)
   - Bandwidth utilization in Mbps
   - Unique source-destination pair identification
   - Network flow analysis with data transfer metrics
-- **Visualization**: Dynamic histogram generation of packet size distributions
 - **Interactive Analysis**: Post-capture analysis mode with multiple options:
   - `a`: Analyze captured packets
   - `h`: Generate packet size histogram
@@ -42,21 +40,14 @@ A Python-based network packet sniffer that captures and analyzes network traffic
   pip install dpkt matplotlib
   ```
 
-## Installation
+## Usage
 
-1. Clone the repository:
+Clone the repository:
    ```bash
    git clone https://github.com/Sparky1743/CN-Assignments
    cd Computer-Networks/Packet-Sniffer/
    ```
-
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## Usage
-
+   
 Run the packet sniffer using the following command structure:
 
 ```bash
@@ -94,7 +85,7 @@ Peak Mbps: 166.20
 
 ## Interactive Analysis Mode
 
-After capture completion or when stopped with Ctrl+C, the tool enters interactive analysis mode:
+After capture completion, when stopped with Ctrl+C, the tool enters interactive analysis mode:
 
 1. Press `a` to view detailed packet analysis
 2. Press `h` to generate packet size distribution histogram
