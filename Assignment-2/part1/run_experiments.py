@@ -1,372 +1,281 @@
 #!/usr/bin/env python
 
-from mininet.topo import Topo
-from mininet.net import Mininet
-from mininet.node import CPULimitedHost
-from mininet.link import TCLink
-from mininet.util import dumpNodeConnections
-from mininet.log import setLogLevel
-from mininet.cli import CLI
-
 import os
 import time
 import subprocess
 import argparse
-import threading
-from datetime import datetime
+from mininet.net import Mininet
+from mininet.cli import CLI
+from mininet.log import setLogLevel, info
+from custom_topo import setup_network
 
-# Create result directories if they don't exist
-def create_result_dirs():
-    for exp in ['experiment_a', 'experiment_b', 'experiment_c', 'experiment_d_1', 'experiment_d_5']:
-        result_dir = f'results/{exp}'
-        if not os.path.exists(result_dir):
-            os.makedirs(result_dir)
-            print(f"Created directory: {result_dir}")
+# Define congestion control algorithms
+CONGESTION_ALGOS = ['cubic', 'vegas', 'htcp']
 
-# Define topology for experiment A, B, D - basic dumbbell topology
-class DumbbellTopo(Topo):
-    def build(self, n=7):
-        # Create switches
-        s1 = self.addSwitch('s1')
-        s2 = self.addSwitch('s2')
-        s3 = self.addSwitch('s3')
-        s4 = self.addSwitch('s4')
-
-        # Create hosts on the left side
-        h1 = self.addHost('h1')
-        h2 = self.addHost('h2')
-        h3 = self.addHost('h3')
-        h4 = self.addHost('h4')
-
-        # Create hosts on the right side
-        h5 = self.addHost('h5')
-        h6 = self.addHost('h6')
-        h7 = self.addHost('h7')
-
-        # Connect left hosts to s1 and s2
-        self.addLink(h1, s1, bw=10)  # 10 Mbps
-        self.addLink(h2, s1, bw=10)
-        self.addLink(h3, s2, bw=10)
-        self.addLink(h4, s2, bw=10)
-
-        # Connect right hosts to s3 and s4
-        self.addLink(h5, s3, bw=10)
-        self.addLink(h6, s3, bw=10)
-        self.addLink(h7, s4, bw=10)
-
-        # Connect switches to form dumbbell
-        self.addLink(s1, s3, bw=10)
-        self.addLink(s2, s4, bw=10)
-
-# Topology for experiment C (custom bandwidth scenarios)
-class CustomBandwidthTopo(Topo):
-    def build(self, scenario='c1'):
-        # Create switches
-        s1 = self.addSwitch('s1')
-        s2 = self.addSwitch('s2')
-        s3 = self.addSwitch('s3')
-        s4 = self.addSwitch('s4')
-
-        # Create hosts
-        h1 = self.addHost('h1')
-        h2 = self.addHost('h2')
-        h3 = self.addHost('h3')
-        h4 = self.addHost('h4')
-        h5 = self.addHost('h5')
-        h6 = self.addHost('h6')
-        h7 = self.addHost('h7')
-
-        # Connect hosts to switches
-        self.addLink(h1, s1, bw=10)
-        self.addLink(h2, s1, bw=10)
-        self.addLink(h3, s2, bw=10)
-        self.addLink(h4, s2, bw=10)
-        self.addLink(h5, s3, bw=10)
-        self.addLink(h6, s3, bw=10)
-        self.addLink(h7, s4, bw=10)
-
-        # Connect switches based on scenario
-        if scenario == 'c1':
-            # C-I: Only S2-S4 link active
-            self.addLink(s2, s4, bw=10)
-        else:
-            # C-II: S1-S4 link active for a, b, c
-            self.addLink(s1, s4, bw=10)
-
-# Run tcpdump in background to capture packets
-def start_tcpdump(node, interface, output_file):
-    print(f"Starting tcpdump on {node.name}")
-    return node.popen(f"tcpdump -i {interface} -w {output_file} tcp", shell=True)
-
-# Run iperf3 client
-def run_iperf_client(node, server_ip, output_file, duration=60, port=5001, start_delay=0):
-    if start_delay > 0:
-        print(f"Waiting {start_delay}s before starting {node.name}...")
-        time.sleep(start_delay)
+def start_capture(net, host, output_file):
+    """Start tcpdump on a host"""
+    # Make sure the directory exists
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
     
-    print(f"Running iperf3 client on {node.name} connecting to {server_ip}")
-    cmd = f"iperf3 -c {server_ip} -t {duration} -J -p {port} > {output_file} 2>&1"
-    return node.cmd(cmd)
+    cmd = f'tcpdump -i {host.defaultIntf().name} -w {output_file} tcp &'
+    host.cmd(cmd)
+    return host.lastPid  # Corrected from lastPID to lastPid
 
-# Set TCP congestion control algorithm
-def set_tcp_congestion_algorithm(net, algo):
-    for host in net.hosts:
-        host.cmd(f"sysctl -w net.ipv4.tcp_congestion_control={algo}")
-    print(f"Set TCP congestion algorithm to {algo}")
+def stop_capture(host, pid):
+    """Stop tcpdump on a host"""
+    host.cmd(f'kill -9 {pid}')
+    time.sleep(1)  # Give time for the process to terminate
 
-# Run experiment A: Basic performance comparison
-def run_experiment_a(net, congestion_algos, duration=60):
-    print("\n=== Running Experiment A: Basic Performance Comparison ===\n")
-    result_dir = 'results/experiment_a'
-    
-    for algo in congestion_algos:
-        print(f"\nTesting congestion algorithm: {algo}")
-        set_tcp_congestion_algorithm(net, algo)
-        
-        # Start server on h7
-        h7 = net.get('h7')
-        server_cmd = f"iperf3 -s -p 5001 &"
-        h7.cmd(server_cmd)
-        time.sleep(1)  # Give server time to start
-        
-        # Start tcpdump
-        pcap_file = f"{result_dir}/h1_h7_{algo}.pcap"
-        tcpdump_proc = start_tcpdump(h7, "h7-eth0", pcap_file)
-        time.sleep(1)  # Give tcpdump time to start
-        
-        # Run iperf client
-        h1 = net.get('h1')
-        output_file = f"{result_dir}/h1_h7_{algo}.json"
-        run_iperf_client(h1, h7.IP(), output_file, duration)
-        
-        # Stop tcpdump and server
-        tcpdump_proc.terminate()
-        h7.cmd("killall iperf3")
-        time.sleep(1)
-    
-    print("Experiment A completed.")
+def run_server(server_host, port=5201):
+    """Run iperf3 server"""
+    cmd = f'iperf3 -s -p {port} -D'  # Run in daemon mode
+    server_host.cmd(cmd)
+    info(f'*** Server started on {server_host.name} port {port}\n')
+    time.sleep(1)  # Wait for server to start
 
-# Run experiment B: Staggered clients
-def run_experiment_b(net, congestion_algos):
-    print("\n=== Running Experiment B: Staggered Clients ===\n")
-    result_dir = 'results/experiment_b'
-    
-    # Clients will start at different times
-    clients = [('h1', 0), ('h3', 15), ('h4', 30)]
-    durations = [150, 120, 90]
-    
-    for algo in congestion_algos:
-        print(f"\nTesting congestion algorithm: {algo}")
-        set_tcp_congestion_algorithm(net, algo)
-        
-        # Start server on h7
-        h7 = net.get('h7')
-        server_cmd = f"iperf3 -s -p 5001 &"
-        h7.cmd(server_cmd)
-        time.sleep(1)  # Give server time to start
-        
-        # Start tcpdump
-        pcap_file = f"{result_dir}/staggered_{algo}.pcap"
-        tcpdump_proc = start_tcpdump(h7, "h7-eth0", pcap_file)
-        time.sleep(1)  # Give tcpdump time to start
-        
-        # Start clients in separate threads
-        threads = []
-        for i, (client_name, delay) in enumerate(clients):
-            client = net.get(client_name)
-            output_file = f"{result_dir}/{client_name}_staggered_{algo}.json"
-            
-            thread = threading.Thread(
-                target=run_iperf_client,
-                args=(client, h7.IP(), output_file, durations[i], 5001, delay)
-            )
-            threads.append(thread)
-            thread.start()
-        
-        # Wait for all threads to complete
-        for thread in threads:
-            thread.join()
-        
-        # Stop tcpdump and server
-        tcpdump_proc.terminate()
-        h7.cmd("killall iperf3")
-        time.sleep(1)
-    
-    print("Experiment B completed.")
+def run_client(client_host, server_ip, port=5201, bw='10M', parallel=10, duration=150, cong_ctrl='cubic'):
+    """Run iperf3 client"""
+    output_file = f'iperf3_{client_host.name}_to_h7_{cong_ctrl}.json'
+    cmd = f'iperf3 -c {server_ip} -p {port} -b {bw} -P {parallel} -t {duration} -C {cong_ctrl} -J > {output_file}'
+    info(f'*** Running client on {client_host.name} with {cong_ctrl}\n')
+    client_host.cmd(cmd)
+    return output_file
 
-# Run experiment C: Custom bandwidth scenarios
-def run_experiment_c(congestion_algos):
-    print("\n=== Running Experiment C: Custom Bandwidth Scenarios ===\n")
-    result_dir = 'results/experiment_c'
-    
-    # Define the different parts of experiment C
-    scenarios = {
-        'c1': ['h3'],             # C-I: Only h3 can reach h7
-        'c2a': ['h1', 'h2'],      # C-II-a: h1, h2 can reach h7
-        'c2b': ['h1', 'h3'],      # C-II-b: h1, h3 can reach h7
-        'c2c': ['h1', 'h3', 'h4'] # C-II-c: h1, h3, h4 can reach h7
-    }
-    
-    for scenario, clients in scenarios.items():
-        print(f"\nRunning scenario {scenario}...")
-        
-        # Create topology for this scenario
-        topo = CustomBandwidthTopo(scenario=scenario)
-        net = Mininet(topo=topo, host=CPULimitedHost, link=TCLink)
-        net.start()
-        
-        # Test with each congestion algorithm
-        for algo in congestion_algos:
-            print(f"Testing algorithm {algo} with scenario {scenario}")
-            set_tcp_congestion_algorithm(net, algo)
-            
-            # Start server on h7
-            h7 = net.get('h7')
-            server_cmd = f"iperf3 -s -p 5001 &"
-            h7.cmd(server_cmd)
-            time.sleep(1)
-            
-            # Start tcpdump
-            pcap_file = f"{result_dir}/{scenario}_{algo}.pcap"
-            tcpdump_proc = start_tcpdump(h7, "h7-eth0", pcap_file)
-            time.sleep(1)
-            
-            # Start all clients simultaneously
-            threads = []
-            for client_name in clients:
-                client = net.get(client_name)
-                output_file = f"{result_dir}/{client_name}_{scenario}_{algo}.json"
-                
-                thread = threading.Thread(
-                    target=run_iperf_client,
-                    args=(client, h7.IP(), output_file, 60, 5001, 0)
-                )
-                threads.append(thread)
-                thread.start()
-            
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-            
-            # Stop tcpdump and server
-            tcpdump_proc.terminate()
-            h7.cmd("killall iperf3")
-            time.sleep(1)
-        
-        net.stop()
-    
-    print("Experiment C completed.")
 
-# Run experiment D: Packet loss scenarios
-def run_experiment_d(net, congestion_algos, loss_rate):
-    print(f"\n=== Running Experiment D: {loss_rate}% Packet Loss ===\n")
-    result_dir = f'results/experiment_d_{loss_rate}'
+
+# Run  the  client  on  H1  and  the  server  on  H7.  Measure  the  below  parameters  and 
+# summarize the observations for the three congestion schemes as applicable.  
+# 1. Throughput over time (with valid Wireshark I/O graphs)  
+# 2. Goodput 
+# 3. Packet loss rate 
+# 4. Maximum window size achieved (with valid Wireshark I/O graphs). 
+
+def experiment_a(net):
+    """Run experiment A: H1 -> H7 with different congestion control algorithms"""
+    info('*** Running Experiment A\n')
     
-    # Set up packet loss on the bottleneck link
-    print(f"Setting {loss_rate}% packet loss on bottleneck links")
-    net.configLinkStatus('s1', 's3', 'down')  # Turn off one link to force traffic through s2-s4
-    s2, s4 = net.get('s2', 's4')
+    h1, h7 = net.get('h1', 'h7')
+    server_ip = h7.IP()
     
-    # Apply loss to both directions on the link
-    s2.cmdPrint(f"tc qdisc add dev s2-eth5 root netem loss {loss_rate}%")
-    s4.cmdPrint(f"tc qdisc add dev s4-eth5 root netem loss {loss_rate}%")
-    
-    clients = ['h1', 'h3', 'h4']
-    
-    for algo in congestion_algos:
-        print(f"\nTesting congestion algorithm: {algo} with {loss_rate}% loss")
-        set_tcp_congestion_algorithm(net, algo)
+    for algo in CONGESTION_ALGOS:
+        info(f'*** Starting experiment with {algo}\n')
         
-        # Start server on h7
-        h7 = net.get('h7')
-        server_cmd = f"iperf3 -s -p 5001 &"
-        h7.cmd(server_cmd)
-        time.sleep(1)
+        # Ensure output directory exists
+        os.makedirs('results/experiment_a', exist_ok=True)
         
-        # Start tcpdump
-        pcap_file = f"{result_dir}/d_{loss_rate}_{algo}.pcap"
-        tcpdump_proc = start_tcpdump(h7, "h7-eth0", pcap_file)
-        time.sleep(1)
+        # Start capture
+        pcap_file = f'results/experiment_a/h1_h7_{algo}.pcap'
+        capture_pid = start_capture(net, h7, pcap_file)
         
-        # Run clients in parallel
-        threads = []
-        for client_name in clients:
-            client = net.get(client_name)
-            output_file = f"{result_dir}/{client_name}_d_{loss_rate}_{algo}.json"
-            
-            thread = threading.Thread(
-                target=run_iperf_client,
-                args=(client, h7.IP(), output_file, 60)
-            )
-            threads.append(thread)
-            thread.start()
+        # Start server
+        run_server(h7)
         
-        # Wait for all threads to complete
-        for thread in threads:
-            thread.join()
+        # Run client
+        output_file = run_client(h1, server_ip, cong_ctrl=algo)
         
-        # Stop tcpdump and server
-        tcpdump_proc.terminate()
-        h7.cmd("killall iperf3")
-        time.sleep(1)
+        # Stop capture
+        stop_capture(h7, capture_pid)
+        
+        # Move output file to results directory
+        os.system(f'mv {output_file} results/experiment_a/')
+        
+        # Clean up
+        h7.cmd('pkill -9 iperf3')
+        time.sleep(2)  # Wait for cleanup
+
+def experiment_b(net):
+    """Run experiment B: Staggered clients H1, H3, H4 -> H7"""
+    info('*** Running Experiment B\n')
     
-    # Remove the packet loss settings
-    s2.cmdPrint("tc qdisc del dev s2-eth5 root")
-    s4.cmdPrint("tc qdisc del dev s4-eth5 root")
-    net.configLinkStatus('s1', 's3', 'up')  # Restore original link
+    h1, h3, h4, h7 = net.get('h1', 'h3', 'h4', 'h7')
+    server_ip = h7.IP()
     
-    print(f"Experiment D with {loss_rate}% loss completed.")
+    for algo in CONGESTION_ALGOS:
+        info(f'*** Starting experiment with {algo}\n')
+        
+        # Ensure output directory exists
+        os.makedirs('results/experiment_b', exist_ok=True)
+        
+        # Start capture
+        pcap_file = f'results/experiment_b/staggered_{algo}.pcap'
+        capture_pid = start_capture(net, h7, pcap_file)
+        
+        # Start server
+        run_server(h7)
+        
+        # Start H1 client at T=0s for 150s
+        h1.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 150 -C {algo} -J > results/experiment_b/h1_staggered_{algo}.json &')
+        
+        # Start H3 client at T=15s for 120s
+        time.sleep(15)
+        h3.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 120 -C {algo} -J > results/experiment_b/h3_staggered_{algo}.json &')
+        
+        # Start H4 client at T=30s for 90s
+        time.sleep(15)
+        h4.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 90 -C {algo} -J > results/experiment_b/h4_staggered_{algo}.json &')
+        
+        # Wait for all experiments to finish
+        time.sleep(120)  # Total wait = 15 + 15 + 120 = 150s
+        
+        # Stop capture
+        stop_capture(h7, capture_pid)
+        
+        # Clean up
+        h7.cmd('pkill -9 iperf3')
+        time.sleep(2)  # Wait for cleanup
+
+# c.  Configure the links with the following bandwidths: 
+# I.  Link S1-S2: 100Mbps 
+# II.  Links S2-S3: 50Mbps 
+# III.  Links S3-S4: 100Mbps 
+#             Measure the performance parameters listed in part (a) and explain the observations in 
+# the following conditions: 
+# 1.  Link S2-S4 is active with client on H3 and server on H7. 
+# 2.  Link S1-S4 is active with: 
+# a.  Running client on H1 and H2 and server on H7 
+# b.  Running client on H1 and H3 and server on H7 
+# c.  Running client on H1, H3 and H4 and server on H7
+
+def experiment_c(net):
+    """Run experiment C with custom bandwidths"""
+    info('*** Running Experiment C\n')
+    
+    # Get hosts
+    h1, h2, h3, h4, h7 = net.get('h1', 'h2', 'h3', 'h4', 'h7')
+    server_ip = h7.IP()
+    
+    # Create results directory
+    os.makedirs('results/experiment_c', exist_ok=True)
+    
+    # Configure link bandwidths (already done in topology setup)
+    
+    for algo in CONGESTION_ALGOS:
+        info(f'*** Starting experiment C with {algo}\n')
+        
+        # C-I: Link S2-S4 active (H3 -> H7)
+        pcap_file = f'results/experiment_c/c1_{algo}.pcap'
+        capture_pid = start_capture(net, h7, pcap_file)
+        run_server(h7)
+        run_client(h3, server_ip, cong_ctrl=algo)
+        stop_capture(h7, capture_pid)
+        h7.cmd('pkill -9 iperf3')
+        time.sleep(2)
+        
+        # C-II-a: Link S1-S4 active (H1,H2 -> H7)
+        pcap_file = f'results/experiment_c/c2a_{algo}.pcap'
+        capture_pid = start_capture(net, h7, pcap_file)
+        run_server(h7)
+        # Start both clients
+        h1.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 150 -C {algo} -J > results/experiment_c/h1_c2a_{algo}.json &')
+        h2.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 150 -C {algo} -J > results/experiment_c/h2_c2a_{algo}.json &')
+        time.sleep(150)  # Wait for test to complete
+        stop_capture(h7, capture_pid)
+        h7.cmd('pkill -9 iperf3')
+        time.sleep(2)
+        
+        # C-II-b: Link S1-S4 active (H1,H3 -> H7)
+        pcap_file = f'results/experiment_c/c2b_{algo}.pcap'
+        capture_pid = start_capture(net, h7, pcap_file)
+        run_server(h7)
+        # Start both clients
+        h1.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 150 -C {algo} -J > results/experiment_c/h1_c2b_{algo}.json &')
+        h3.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 150 -C {algo} -J > results/experiment_c/h3_c2b_{algo}.json &')
+        time.sleep(150)  # Wait for test to complete
+        stop_capture(h7, capture_pid)
+        h7.cmd('pkill -9 iperf3')
+        time.sleep(2)
+        
+        # C-II-c: Link S1-S4 active (H1,H3,H4 -> H7)
+        pcap_file = f'results/experiment_c/c2c_{algo}.pcap'
+        capture_pid = start_capture(net, h7, pcap_file)
+        run_server(h7)
+        # Start all clients
+        h1.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 150 -C {algo} -J > results/experiment_c/h1_c2c_{algo}.json &')
+        h3.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 150 -C {algo} -J > results/experiment_c/h3_c2c_{algo}.json &')
+        h4.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 150 -C {algo} -J > results/experiment_c/h4_c2c_{algo}.json &')
+        time.sleep(150)  # Wait for test to complete
+        stop_capture(h7, capture_pid)
+        h7.cmd('pkill -9 iperf3')
+        time.sleep(2)
+
+def experiment_d(net, loss_rate):
+    """Run experiment D with link loss"""
+    info(f'*** Running Experiment D with {loss_rate}% packet loss\n')
+    
+    # Get hosts
+    h1, h3, h4, h7 = net.get('h1', 'h3', 'h4', 'h7')
+    server_ip = h7.IP()
+    
+    # Create results directory
+    os.makedirs(f'results/experiment_d_{loss_rate}', exist_ok=True)
+    
+    for algo in CONGESTION_ALGOS:
+        info(f'*** Starting experiment D with {algo} and {loss_rate}% loss\n')
+        
+        # Run clients as in experiment_c part C-II-c but with link loss
+        pcap_file = f'results/experiment_d_{loss_rate}/d_{loss_rate}_{algo}.pcap'
+        capture_pid = start_capture(net, h7, pcap_file)
+        run_server(h7)
+        
+        # Start all clients
+        h1.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 150 -C {algo} -J > results/experiment_d_{loss_rate}/h1_d_{loss_rate}_{algo}.json &')
+        h3.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 150 -C {algo} -J > results/experiment_d_{loss_rate}/h3_d_{loss_rate}_{algo}.json &')
+        h4.cmd(f'iperf3 -c {server_ip} -p 5201 -b 10M -P 10 -t 150 -C {algo} -J > results/experiment_d_{loss_rate}/h4_d_{loss_rate}_{algo}.json &')
+        
+        time.sleep(150)  # Wait for test to complete
+        stop_capture(h7, capture_pid)
+        h7.cmd('pkill -9 iperf3')
+        time.sleep(2)
 
 def main():
+    """Main function to run all experiments"""
     parser = argparse.ArgumentParser(description='Run TCP congestion control experiments')
-    parser.add_argument('--experiment', choices=['a', 'b', 'c', 'd1', 'd5', 'all'], default='all',
-                      help='Experiment to run')
+    parser.add_argument('--option', choices=['a', 'b', 'c', 'd', 'all'], default='all',
+                      help='Experiment option to run (a, b, c, d, or all)')
     
     args = parser.parse_args()
-    experiment = args.experiment
+    option = args.option
     
-    # Set Mininet log level
+    # Create results directory
+    os.makedirs('results', exist_ok=True)
+    
+    # Set log level
     setLogLevel('info')
     
-    # Create result directories
-    create_result_dirs()
-    
-    # Common congestion algorithms to test
-    congestion_algos = ['cubic', 'vegas', 'htcp']
-    
-    # Run selected experiments
-    if experiment in ['a', 'all', 'b', 'd1', 'd5']:
-        # Create base topology for experiments A, B, D
-        topo = DumbbellTopo()
-        net = Mininet(topo=topo, host=CPULimitedHost, link=TCLink)
+    if option in ['a', 'b', 'all']:
+        # Standard network for experiments A and B
+        net = setup_network()
         net.start()
         
-        print("Starting network:")
-        dumpNodeConnections(net.hosts)
+        if option == 'a' or option == 'all':
+            experiment_a(net)
         
-        # Verify connectivity
-        print("Verifying connectivity:")
-        net.pingAll()
-        
-        # Run experiments
-        if experiment in ['a', 'all']:
-            run_experiment_a(net, congestion_algos)
-        
-        if experiment in ['b', 'all']:
-            run_experiment_b(net, congestion_algos)
-        
-        if experiment in ['d1', 'all']:
-            run_experiment_d(net, congestion_algos, 1)
-        
-        if experiment in ['d5', 'all']:
-            run_experiment_d(net, congestion_algos, 5)
+        if option == 'b' or option == 'all':
+            experiment_b(net)
         
         net.stop()
     
-    if experiment in ['c', 'all']:
-        run_experiment_c(congestion_algos)
+    if option in ['c', 'all']:
+        # Custom bandwidth network for experiment C
+        net = setup_network(bandwidth_s1_s2=100, bandwidth_s2_s3=50, bandwidth_s3_s4=100)
+        net.start()
+        experiment_c(net)
+        net.stop()
     
-    print("\nAll requested experiments completed!")
+    if option in ['d', 'all']:
+        # 1% loss network for experiment D
+        net = setup_network(bandwidth_s1_s2=100, bandwidth_s2_s3=50, bandwidth_s3_s4=100, loss_s2_s3=1)
+        net.start()
+        experiment_d(net, 1)
+        net.stop()
+        
+        # 5% loss network for experiment D
+        net = setup_network(bandwidth_s1_s2=100, bandwidth_s2_s3=50, bandwidth_s3_s4=100, loss_s2_s3=5)
+        net.start()
+        experiment_d(net, 5)
+        net.stop()
+    
+    info('*** All experiments completed\n')
 
 if __name__ == '__main__':
     main()

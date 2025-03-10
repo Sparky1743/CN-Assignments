@@ -22,8 +22,23 @@ chmod +x run_experiments.py analyze_results.py
 # This script uses the custom_topo.py file that has been modified to use Host instead of CPULimitedHost
 
 # Run all experiments
-echo "===== Running all experiments ====="
-python3 run_experiments.py --option=all
+echo "Running experiment a"
+sudo python3 run_experiments.py --option=a
+echo "analyze part a"
+python3 analyze_results.py --experiment=a
+echo "Running experiment b"
+sudo python3 run_experiments.py --option=b
+echo "analyze part b"
+python3 analyze_results.py --experiment=b
+echo "Running experiment c"
+sudo python3 run_experiments.py --option=c
+echo "analyze part c"
+python3 analyze_results.py --experiment=c
+echo "Running experiment d"
+sudo python3 run_experiments.py --option=d
+echo "analyze part d"
+python3 analyze_results.py --experiment=d
+
 
 # Analyze results
 echo "===== Analyzing results ====="
