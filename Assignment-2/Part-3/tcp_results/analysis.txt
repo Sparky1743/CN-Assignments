@@ -1,0 +1,35 @@
+=== TCP Performance Analysis: Nagle's Algorithm and Delayed-ACK ===
+
+Configuration             Throughput (B/s)     Goodput (B/s)        Packet Loss Rate     Avg Packet Size (B) 
+---------------------------------------------------------------------------------------------------------
+nagle_on_delack_on        38.93                39.13                0.00%                39.80               
+nagle_on_delack_off       38.93                39.13                0.00%                39.80               
+nagle_off_delack_on       38.92                39.12                0.00%                39.80               
+nagle_off_delack_off      38.92                39.12                0.00%                39.80               
+
+
+=== Analysis and Observations ===
+
+1. Effect of Nagle's Algorithm:
+   - Average throughput with Nagle on: 38.93 B/s
+   - Average throughput with Nagle off: 38.92 B/s
+   - Nagle's algorithm increases throughput by 0.01 B/s (0.03%)
+
+2. Effect of Delayed ACK:
+   - Average throughput with Delayed ACK on: 38.92 B/s
+   - Average throughput with Delayed ACK off: 38.92 B/s
+   - Delayed ACK decreases throughput by 0.00 B/s (0.00%)
+
+3. Best Configuration:
+   - nagle_on_delack_on provides the highest goodput at 39.13 B/s
+
+4. Explanation of Observations:
+   - Nagle's Algorithm aims to reduce the number of small packets by buffering data until either a full-sized packet can be sent or an ACK is received.
+   - Delayed ACK reduces the number of ACKs by delaying them, which can cause Nagle's algorithm to wait unnecessarily.
+   - When both are enabled, they can create a 'lock-step' behavior where each is waiting for the other.
+   - Disabling both typically gives the best interactive performance but may increase network overhead.
+
+5. Recommendations:
+   - For bulk transfers: Nagle on, Delayed ACK on - Reduces overhead, maximizes efficiency
+   - For interactive applications: Nagle off, Delayed ACK off - Minimizes latency
+   - For mixed workloads: Nagle off, Delayed ACK on - Good compromise
